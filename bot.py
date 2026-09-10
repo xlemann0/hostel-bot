@@ -5,12 +5,21 @@ from io import BytesIO
 import qrcode
 import telebot
 from telebot import types
+from telebot.handler_backends import State, StatesGroup
+from telebot.storage import StateMemoryStorage
 
 TOKEN = "8946349098:AAFQKMlUCyl3pFcYC5EEnzDPxlYKKvHMe_8"
 SUPER_ADMIN_ID = 5874144878
 
-bot = telebot.TeleBot(TOKEN)
-user_states = {}
+state_storage = StateMemoryStorage()
+bot = telebot.TeleBot(TOKEN, state_storage=state_storage)
+
+
+class AdminStates(StatesGroup):
+  waiting_for_admin_id = State()
+  waiting_for_del_admin_id = State()
+  waiting_for_student_info = State()
+  waiting_for_del_student_id = State()
 
 
 def init_db():
@@ -169,6 +178,8 @@ def get_student_keyboard():
 def cmd_start(message):
   add_admin(SUPER_ADMIN_ID)
   user_id = message.from_user.id
+  bot.delete_state(user_id, message.chat.id)
+
   if is_admin(user_id):
     bot.send_message(
         user_id,
@@ -190,6 +201,7 @@ def cmd_start(message):
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call):
   user_id = call.from_user.id
+  chat_id = call.message.chat.id
 
   if call.data == "stats":
     if not is_admin(user_id):
@@ -200,7 +212,7 @@ def callback_handler(call):
         f"📊 **Yotoqxona davomat statistikasi:**\n\n👥 Jami talabalar: {total}\n✅"
         f" Bugun kelganlar: {present}\n❌ Hozircha yo'qlar: {absent}"
     )
-    bot.send_message(user_id, text, parse_mode="Markdown")
+    bot.send_message(chat_id, text, parse_mode="Markdown")
 
   elif call.data == "get_qr":
     if not is_admin(user_id):
@@ -210,7 +222,7 @@ def callback_handler(call):
     img.save(output, format="PNG")
     output.seek(0)
     bot.send_photo(
-        user_id,
+        chat_id,
         output,
         caption=(
             "📌 **Tayyor QR kod.**\nTalabalar ushbu QR kodni skaner qilish orqali"
@@ -224,23 +236,23 @@ def callback_handler(call):
       return bot.answer_callback_query(
           call.id, "Faqat bosh admin qo'sha oladi!"
       )
-    user_states[user_id] = "waiting_for_admin_id"
-    bot.send_message(user_id, "Yangi adminning Telegram ID raqamini yuboring:")
+    bot.set_state(user_id, AdminStates.waiting_for_admin_id, chat_id)
+    bot.send_message(chat_id, "Yangi adminning Telegram ID raqamini yuboring:")
 
   elif call.data == "del_admin":
     if user_id != SUPER_ADMIN_ID:
       return bot.answer_callback_query(call.id, "Ruxsat yo'q!")
-    user_states[user_id] = "waiting_for_del_admin_id"
+    bot.set_state(user_id, AdminStates.waiting_for_del_admin_id, chat_id)
     bot.send_message(
-        user_id, "O'chiriladigan adminning Telegram ID raqamini yuboring:"
+        chat_id, "O'chiriladigan adminning Telegram ID raqamini yuboring:"
     )
 
   elif call.data == "add_student":
     if not is_admin(user_id):
       return bot.answer_callback_query(call.id, "Ruxsat yo'q!")
-    user_states[user_id] = "waiting_for_student_info"
+    bot.set_state(user_id, AdminStates.waiting_for_student_info, chat_id)
     bot.send_message(
-        user_id,
+        chat_id,
         "Talaba ma'lumotlarini yuboring (Format: `ID F.I.O`)\nMasalan:"
         " `123456789 Anvaraliyev Baxtiyor`",
         parse_mode="Markdown",
@@ -249,9 +261,9 @@ def callback_handler(call):
   elif call.data == "del_student":
     if not is_admin(user_id):
       return bot.answer_callback_query(call.id, "Ruxsat yo'q!")
-    user_states[user_id] = "waiting_for_del_student_id"
+    bot.set_state(user_id, AdminStates.waiting_for_del_student_id, chat_id)
     bot.send_message(
-        user_id, "O'chiriladigan talabaning Telegram ID raqamini yuboring:"
+        chat_id, "O'chiriladigan talabaning Telegram ID raqamini yuboring:"
     )
 
   elif call.data == "scan_qr":
@@ -261,13 +273,13 @@ def callback_handler(call):
       )
     if mark_attendance(user_id):
       bot.send_message(
-          user_id,
+          chat_id,
           "✅ **Davomatingiz muvaffaqiyatli belgilandi!**",
           parse_mode="Markdown",
       )
     else:
       bot.send_message(
-          user_id,
+          chat_id,
           "⚠️ **Diqqat:** Siz bugun allaqachon davomat qilgansiz!",
           parse_mode="Markdown",
       )
@@ -275,51 +287,78 @@ def callback_handler(call):
   bot.answer_callback_query(call.id)
 
 
-@bot.message_handler(func=lambda message: message.from_user.id in user_states)
-def handle_states(message):
+@bot.message_handler(
+    state=AdminStates.waiting_for_admin_id, content_types=["text"]
+)
+def process_add_admin(message):
   user_id = message.from_user.id
-  state = user_states.get(user_id)
+  chat_id = message.chat.id
+  try:
+    new_id = int(message.text.strip())
+    add_admin(new_id)
+    bot.send_message(chat_id, f"✅ Admin {new_id} qo'shildi!")
+  except ValueError:
+    bot.send_message(chat_id, "❌ Faqat raqam yuboring!")
+  bot.delete_state(user_id, chat_id)
 
-  if state == "waiting_for_admin_id":
-    try:
-      new_id = int(message.text)
-      add_admin(new_id)
-      bot.send_message(user_id, f"✅ Admin {new_id} qo'shildi!")
-    except ValueError:
-      bot.send_message(user_id, "❌ Faqat raqam yuboring!")
-  elif state == "waiting_for_del_admin_id":
-    try:
-      del_id = int(message.text)
-      if del_id == SUPER_ADMIN_ID:
-        bot.send_message(user_id, "❌ Bosh adminni o'chirib bo'lmaydi!")
-      else:
-        remove_admin(del_id)
-        bot.send_message(user_id, f"🗑 Admin {del_id} o'chirildi.")
-    except ValueError:
-      bot.send_message(user_id, "❌ Noto'g'ri format.")
-  elif state == "waiting_for_student_info":
-    parts = message.text.split(maxsplit=1)
-    if len(parts) < 2:
-      bot.send_message(user_id, "❌ Xato format! `ID F.I.O` ko'rinishida yuboring.")
-      return
-    try:
-      s_id = int(parts[0])
-      s_name = parts[1]
-      add_student(s_id, s_name)
-      bot.send_message(
-          user_id, f"✅ Talaba qo'shildi:\nID: {s_id}\nIsm: {s_name}"
-      )
-    except ValueError:
-      bot.send_message(user_id, "❌ ID raqam bo'lishi shart!")
-  elif state == "waiting_for_del_student_id":
-    try:
-      s_id = int(message.text)
-      remove_student(s_id)
-      bot.send_message(user_id, f"🗑 Talaba (ID: {s_id}) o'chirildi.")
-    except ValueError:
-      bot.send_message(user_id, "❌ Xato format.")
 
-  user_states.pop(user_id, None)
+@bot.message_handler(
+    state=AdminStates.waiting_for_del_admin_id, content_types=["text"]
+)
+def process_del_admin(message):
+  user_id = message.from_user.id
+  chat_id = message.chat.id
+  try:
+    del_id = int(message.text.strip())
+    if del_id == SUPER_ADMIN_ID:
+      bot.send_message(chat_id, "❌ Bosh adminni o'chirib bo'lmaydi!")
+    else:
+      remove_admin(del_id)
+      bot.send_message(chat_id, f"🗑 Admin {del_id} o'chirildi.")
+  except ValueError:
+    bot.send_message(chat_id, "❌ Noto'g'ri format.")
+  bot.delete_state(user_id, chat_id)
+
+
+@bot.message_handler(
+    state=AdminStates.waiting_for_student_info, content_types=["text"]
+)
+def process_add_student(message):
+  user_id = message.from_user.id
+  chat_id = message.chat.id
+  parts = message.text.strip().split(maxsplit=1)
+  if len(parts) < 2:
+    bot.send_message(chat_id, "❌ Xato format! `ID F.I.O` ko'rinishida yuboring.")
+    bot.delete_state(user_id, chat_id)
+    return
+  try:
+    s_id = int(parts[0])
+    s_name = parts[1]
+    add_student(s_id, s_name)
+    bot.send_message(
+        chat_id, f"✅ Talaba qo'shildi:\nID: {s_id}\nIsm: {s_name}"
+    )
+  except ValueError:
+    bot.send_message(chat_id, "❌ ID raqam bo'lishi shart!")
+  bot.delete_state(user_id, chat_id)
+
+
+@bot.message_handler(
+    state=AdminStates.waiting_for_del_student_id, content_types=["text"]
+)
+def process_del_student(message):
+  user_id = message.from_user.id
+  chat_id = message.chat.id
+  try:
+    s_id = int(message.text.strip())
+  except ValueError:
+    bot.send_message(chat_id, "❌ Xato format. ID raqam bo'lishi kerak.")
+    bot.delete_state(user_id, chat_id)
+    return
+
+  remove_student(s_id)
+  bot.send_message(chat_id, f"🗑 Talaba (ID: {s_id}) o'chirildi.")
+  bot.delete_state(user_id, chat_id)
 
 
 if __name__ == "__main__":
