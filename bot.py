@@ -8,8 +8,8 @@ from telebot import types
 from telebot.handler_backends import State, StatesGroup
 from telebot.storage import StateMemoryStorage
 
-TOKEN = "8946349098:AAFQKMlUCyl3pFcYC5EEnzDPxlYKKvHMe_8"
-SUPER_ADMIN_ID = 5874144878
+TOKEN = "89nzDPxlYKKvHMe_8"
+SUPER_ADMIN_ID = 587418
 
 state_storage = StateMemoryStorage()
 bot = telebot.TeleBot(TOKEN, state_storage=state_storage)
